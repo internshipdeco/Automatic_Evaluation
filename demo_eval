@@ -1,0 +1,129 @@
+import pandas as pd
+import numpy as np
+import re
+import nltk
+nltk.download('stopwords')
+from nltk.corpus import stopwords
+import scipy as sp
+import matplotlib.pyplot as plt
+
+
+#Loading Training File
+df = pd.read_csv("incedo_participant//train_dataset.csv", encoding="utf-8")
+
+#Loading Test File
+df_test = pd.read_csv("incedo_participant//test_dataset.csv")
+
+
+from sklearn.preprocessing import Imputer
+imputer = Imputer(missing_values = "NaN", strategy = "mean", axis = 0)
+imputer.fit(df[["score_3","score_4","score_5"]])
+df[["score_3","score_4","score_5"]] = imputer.transform(df[["score_3","score_4","score_5"]]).astype(int)
+
+imputer = Imputer(missing_values = "NaN", strategy = "most_frequent", axis = 0)
+imputer.fit(df[["clarity"]])
+df[["clarity"]] = imputer.transform(df[["clarity"]])
+df["Essayset"] = df["Essayset"].fillna(method='bfill').astype(int)
+
+
+onehotencoder = pd.get_dummies(df["clarity"], prefix="clarity")
+onehotencoder2 = pd.get_dummies(df["coherent"], prefix="coherent")
+df_update = pd.concat([df,onehotencoder,onehotencoder2], axis = 1).drop (['clarity','coherent'], axis = 1)
+
+corpus = []
+for i in range (0, len(df)):
+    review = re.sub('[^a-zA-Z]',' ', df['EssayText'][i])
+    review = review.lower()
+    review = nltk.word_tokenize(review)
+    #ps = PorterStemmer()
+    review = [word for word in review if not word in set(stopwords.words('english'))]
+    review = ' '.join(review)
+    corpus.append(review)
+
+df_update["Cleaned_text"]=corpus
+
+from sklearn.feature_extraction.text import CountVectorizer
+cv = CountVectorizer(max_features=1500)
+df_update["word_vec"] = cv.fit_transform(corpus).toarray()
+
+df_train = df_update.drop(["min_score","max_score","EssayText","Cleaned_text","score_1","score_2","score_3","score_4","score_5"], axis =1)
+
+df_train["final_score"] = df[["score_1","score_2","score_3","score_4","score_5"]].mean(axis=1).astype(int)
+#X = df_train.drop(["final_score"],axis=1)
+y =df_train["final_score"]
+
+#df_train.loc[:, df.columns != 'word_vec']
+df_trainX = df_train.drop(['word_vec', 'final_score'], axis=1)
+X = sp.sparse.hstack((cv.fit_transform(corpus),df_trainX.iloc[:,[0,1,2,3,4,5,6,7,8,9]].values),format='csr')
+#X = sp.sparse.hstack((df_train.values),format='csr')
+#X_columns=vectorizer.get_feature_names()+posts[['feature_1','feature_2']].columns.tolist()
+
+from sklearn.naive_bayes import MultinomialNB
+mul = MultinomialNB()
+#lin_reg = LinearRegression()
+
+#lin_reg.fit(X, y)
+mul.fit(X,y)
+#y_pred = lin_reg.predict(X)
+y_pred = mul.predict(X)
+from sklearn.naive_bayes import GaussianNB
+classifier = GaussianNB()
+classifier.fit(X.toarray(),y)
+print("DOne")
+
+corpus_test = []
+for i in range (0, len(df_test)):
+    review = re.sub('[^a-zA-Z]',' ', df['EssayText'][i])
+    review = review.lower()
+    review = nltk.word_tokenize(review)
+    #ps = PorterStemmer()
+    review = [word for word in review if not word in set(stopwords.words('english'))]
+    review = ' '.join(review)
+    corpus_test.append(review)
+
+X_test = cv.fit_transform(corpus_test).toarray()
+y_pred = classifier.predict(X.toarray())
+df_test["essay_score"] = y_pred
+df_resul = df_test[["ID","Essayset","essay_score"]]
+
+df_resul.to_csv('Submission_test.csv', header =[ "id","essay_set","essay_score"] ,index= False)
+from sklearn.metrics import mean_squared_error, accuracy_score
+
+rmse = np.sqrt(mean_squared_error(y, y_pred))
+print(rmse)
+from sklearn.metrics import jaccard_similarity_score as jc, mean_squared_error
+
+print(jc(y, y_pred))
+
+from sklearn.metrics import f1_score
+print("Avg F1-score : %.4f" %f1_score(y, y_pred, average = 'weighted'))
+
+from sklearn.metrics import average_precision_score
+average_precision = average_precision_score(y, y_pred)
+
+print('Average precision-recall score: {0:0.2f}'.format(average_precision))
+
+plt.scatter(X,y , c ="red")
+plt.show()
+
+plt.scatter(X,y_pred, c = "red")
+plt.show()
+
+
+X = sp.sparse.hstack((cv.fit_transform(corpus),df_trainX.iloc[:,[0,1,2,3,4,8]].values),format='csr')
+mul.fit(X,y)
+y_pred = mul.predict(X)
+rmse = np.sqrt(mean_squared_error(y, y_pred))
+print(rmse)
+
+from sklearn.metrics import classification_report
+
+print('accuracy %s' % accuracy_score(y, y_pred))
+print(classification_report(y, y_pred))
+
+from fancyimpute import KNN
+X_filled_knn = KNN(k=3).fit_tranform(df["clarity"])
+
+from sklearn.impute import SimpleImputer
+imp = SimpleImputer(strategy="most_frequent")
+df[["clarity"]] = imp.fit_transform(df[["clarity"]])
